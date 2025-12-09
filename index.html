@@ -431,15 +431,21 @@
                 const rawCourseName = courseEntry[`${grade}_grade`] || '';
                 const courseName = rawCourseName.trim().toLowerCase();
 
-                // Skip if the extracted course name is empty, N/A, or the default selection
-                if (!courseName || courseName === 'n/a' || courseName === 'select course') {
-                    return; 
-                }
-
                 const selectorName = `${grade} Grade - ${subject}`;
                 const selectElement = document.querySelector(`select[name="${selectorName}"]`);
                 
                 if (selectElement) {
+                    // Check if the extracted course is empty or marked as N/A by the model
+                    if (!courseName || courseName === 'n/a' || courseName === 'select course') {
+                        // Action: Ensure the field is set to "N/A" if it's not explicitly selected,
+                        // to prevent leaving the disabled "Select Course" option active.
+                        if (Array.from(selectElement.options).some(opt => opt.value === 'N/A')) {
+                            selectElement.value = 'N/A';
+                            console.log(`Autofill Default: Extracted "${rawCourseName || 'Empty'}" -> Selected "N/A"`);
+                        }
+                        return; 
+                    }
+
                     // Prepare options for comparison
                     const options = Array.from(selectElement.options).filter(opt => 
                         opt.value !== 'Select Course' && opt.value !== 'N/A'
@@ -480,8 +486,13 @@
                             selectElement.value = bestMatch.value;
                             console.log(`Autofill Levenshtein Match: Extracted "${rawCourseName}" -> Selected "${bestMatch.value}" (Distance: ${minDistance})`);
                         } else {
-                            // Log failure for manual correction
-                            console.warn(`Autofill Skip: No close match found for: "${rawCourseName}" (Subject: ${subject}, Grade: ${grade}). Best distance: ${minDistance}. Please select manually.`);
+                            // 4. If no good match is found, fallback to N/A to avoid leaving the default disabled option.
+                            if (Array.from(selectElement.options).some(opt => opt.value === 'N/A')) {
+                                selectElement.value = 'N/A';
+                                console.warn(`Autofill Fallback: Extracted "${rawCourseName}" -> Selected "N/A" (No close match found. Best distance: ${minDistance})`);
+                            } else {
+                                console.warn(`Autofill Skip: No good match or N/A option for: "${rawCourseName}" (Subject: ${subject}, Grade: ${grade}).`);
+                            }
                         }
                     }
                 }
@@ -604,25 +615,157 @@
         reader.readAsDataURL(file);
     }
 
-    // --- MANUAL ENTRY FORM LOGIC (Unchanged) ---
+    // --- MANUAL ENTRY FORM LOGIC ---
 
     const planTableBody = document.getElementById('planTableBody');
     
-    // **COURSE LIST: Based on standard high school tracks. Customize this list!**
+    // **UPDATED COURSE LIST: Now including the comprehensive list from the uploaded academic guide.**
     const courseOptions = [
-        "Select Course", "N/A", 
-        // English
-        "English I", "English II", "English III", "English IV", "AP English Lang", "AP English Lit", 
-        // Math
-        "Algebra I", "Geometry", "Algebra II", "Pre-Calculus", "AP Calculus AB", "AP Statistics",
-        // Science
-        "Biology", "Chemistry", "Physics", "Anatomy & Phys", "AP Biology", "AP Physics 1",
-        // Social Studies
-        "World History", "US History", "Gov/Econ", "AP US History", "AP Psychology", "AP Human Geo",
-        // Languages
-        "Spanish I", "Spanish II", "French I", "French II", 
-        // Electives/CTE
-        "PE", "Health", "Comp Sci Principles", "Intro to Business", "Band", "Chorus", "Art I", "Journalism"
+        "Select Course", 
+        "N/A", 
+        "2-D Art Design", 
+        "3-D Art Design", 
+        "ACCESS (Core Classes)",
+        "ACT Prep (1 sem)",
+        "Advanced Agriscience",
+        "Advanced Physics",
+        "Algebra I",
+        "Algebra II",
+        "AP Biology",
+        "AP Calculus AB",
+        "AP Calculus BC",
+        "AP Chemistry",
+        "AP English Language",
+        "AP English Comp",
+        "AP English Lit", 
+        "AP Environmental Science",
+        "AP European History",
+        "AP Music Theory",
+        "AP Physics", 
+        "AP Precalculus",
+        "AP Psychology",
+        "AP Research",
+        "AP Seminar",
+        "AP Statistics",
+        "AP US Government",
+        "AP US History",
+        "Applications of Engineering and Technology",
+        "Applied Agriscience",
+        "Archit. Computer Aided Design (1 sem)",
+        "Art I",
+        "Band",
+        "Banking and Financial Services",
+        "Baseball Conditioning (Zero Period)",
+        "Beginning Kinesiology (Girls PE)",
+        "Beginning Kinesiology (Boys PE)",
+        "Biology",
+        "Business Software Applications I",
+        "Business Software Applications II",
+        "Career Prep",
+        "Cheerleading",
+        "Chemistry",
+        "Chorus",
+        "Civil Air Patrol I",
+        "Civil Air Patrol II",
+        "Civil Air Patrol III",
+        "Civil Air Patrol IV",
+        "Civil Air Patrol V",
+        "Comp Sci A",
+        "Comp Sci Principles",
+        "Concert Band (Fall/Spring)",
+        "Concert Choir (1 sem)",
+        "Cooperative Ed WBL (2 hrs)",
+        "Cooperative Ed WBL (3 hrs)",
+        "Cross Country (Fall)",
+        "CTE Lab in BMA",
+        "CTE Lab in Education and Training",
+        "CTE Lab in Finance",
+        "CTE Lab in Health Science",
+        "Cybersecurity- PLTW",
+        "Digital Media Design",
+        "Driver and Traffic Safety Ed",
+        "Earth and Space Science",
+        "Economics (1 sem)",
+        "Education and Training Foundations (CP-A)",
+        "Education and Train. Internship (2 hrs)",
+        "Engineering Essentials (CP-A)",
+        "English I",
+        "English II",
+        "English III",
+        "English IV",
+        "Environmental Science",
+        "Equipment and Training Foundations",
+        "Family and Consumer Sciences",
+        "Forensic Science & Crime SC Invest",
+        "Football Conditioning (Zero Period)",
+        "Fundamentals of Agriscience (CP-A)",
+        "Geometry",
+        "Golf G",
+        "Golf B",
+        "Gov/Econ", 
+        "Guidance Aide",
+        "Health Education",
+        "Health (1 sem)",
+        "Health (0.5 credit)",
+        "Health Science Internship (2 hours)",
+        "Human Anatomy & Physiology",
+        "Human Body Struct. & Funct.",
+        "IRC Peer Aide",
+        "Intermediate Agriscience",
+        "Intro to Computer Science- TEALS",
+        "Intro to Law and General Legal Systems (CP-A)",
+        "Introduction to Engineering Design PLTW",
+        "Introduction to Manufacturing/Workforce",
+        "Journalism",
+        "Library Aide",
+        "Marketing Principles (CP-A)",
+        "Mathematical Modeling",
+        "Music Theory",
+        "Office Aide",
+        "Online Dual Enrollment",
+        "PE (Personal Fitness)",
+        "Personal Finance",
+        "Pharmacy Technician",
+        "Physics",
+        "Precalculus",
+        "Principles of Engineering- PLTW",
+        "Psychology",
+        "Robotics (CP-A)",
+        "Soccer G",
+        "Soccer B",
+        "Softball",
+        "Spanish 1",
+        "Spanish 2",
+        "Spanish 3",
+        "Spanish 4",
+        "Sports and Entertainment Marketing Fund",
+        "Sports Medicine Fundamentals",
+        "Studio Art",
+        "Survey of the New Testament (Fall)",
+        "Survey of the Old Testament (Spring)",
+        "Teaching I - Elementary",
+        "Teaching I - Secondary",
+        "Teaching II",
+        "Tennis",
+        "Theatre",
+        "Theatre I",
+        "Theatre II",
+        "Theatre III",
+        "Theatre IV",
+        "Track (Spring)",
+        "US Government (1 sem)",
+        "US History",
+        "Varsity Baseball",
+        "Varsity Basketball",
+        "Varsity Football",
+        "Varsity Volleyball",
+        "Visual Arts I",
+        "Visual Arts II",
+        "Visual Arts III",
+        "Visual Arts IV",
+        "Vocal Tech",
+        "Wrestling",
+        "Yearbook"
     ];
 
     const subjects = [
