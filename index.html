@@ -310,7 +310,7 @@
     // --- API Configuration ---
 
     // API Key is handled securely by the environment. We keep it empty for runtime substitution.
-    const apiKey = "AIzaSyBQia-EduODmOlx66CHQC7ucqSgIT1yv5o"; 
+    const apiKey = "AIzaSyAUyh-zCzoOcO7AprdvqOoT6i6AuAOzb4w"; 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
     // --- Utility Functions for API Calls ---
@@ -404,6 +404,21 @@
 
         return matrix[b.length][a.length];
     }
+    
+    /**
+     * Cleans a string by removing punctuation, converting to lowercase, and normalizing spaces.
+     * This helps fix minor OCR/spelling errors before comparison.
+     * @param {string} str - The input string (e.g., "AP English-III").
+     * @returns {string} The cleaned string (e.g., "ap english iii").
+     */
+    function cleanString(str) {
+        if (!str) return '';
+        // Remove all non-alphanumeric characters (except spaces) and convert to lower case
+        // Then remove extra spaces and trim.
+        // We allow spaces and alphanumeric characters
+        return str.replace(/[^a-z0-9\s]/gi, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
 
     // --- OCR FUNCTIONALITY ---
     
@@ -413,7 +428,7 @@
 
     /**
      * Auto-fills the course selectors based on the parsed JSON data, prioritizing 
-     * the closest match using Levenshtein distance if an exact match isn't found.
+     * the closest match using Levenshtein distance (fuzzy matching).
      * @param {Object} data - The structured JSON object from the Gemini API.
      */
     function autofillForm(data) {
@@ -429,19 +444,21 @@
 
             grades.forEach(grade => {
                 const rawCourseName = courseEntry[`${grade}_grade`] || '';
-                const courseName = rawCourseName.trim().toLowerCase();
+                
+                // Clean the extracted name for robust comparison
+                const cleanExtractedName = cleanString(rawCourseName);
 
                 const selectorName = `${grade} Grade - ${subject}`;
                 const selectElement = document.querySelector(`select[name="${selectorName}"]`);
                 
                 if (selectElement) {
                     // Check if the extracted course is empty or marked as N/A by the model
-                    if (!courseName || courseName === 'n/a' || courseName === 'select course') {
+                    if (!cleanExtractedName || cleanExtractedName === 'n a' || cleanExtractedName === 'select course') {
                         // Action: Ensure the field is set to "N/A" if it's not explicitly selected,
                         // to prevent leaving the disabled "Select Course" option active.
                         if (Array.from(selectElement.options).some(opt => opt.value === 'N/A')) {
                             selectElement.value = 'N/A';
-                            console.log(`Autofill Default: Extracted "${rawCourseName || 'Empty'}" -> Selected "N/A"`);
+                            console.log(`Autofill Default: Extracted "${rawCourseName || 'Empty'}" -> Selected "N/A" for ${subject} ${grade}`);
                         }
                         return; 
                     }
@@ -451,57 +468,50 @@
                         opt.value !== 'Select Course' && opt.value !== 'N/A'
                     ).map(opt => ({
                         value: opt.value,
-                        text: opt.value.trim().toLowerCase()
+                        cleanText: cleanString(opt.value), // Use cleaned text for comparison
+                        text: opt.value.trim() // Original text for logging/selection
                     }));
 
                     let bestMatch = null;
                     let minDistance = Infinity;
-                    const fuzzyThreshold = 3; // Max allowed distance for a match
+                    // Increased threshold to 8 for very forgiving matching (handles abbreviations and spelling errors)
+                    const fuzzyThreshold = 8; 
 
-                    // 1. Check for Exact or Substring Match (Keep this for fast, reliable matches)
-                    const exactOrSubstringMatch = options.find(opt => 
-                        opt.text === courseName || 
-                        opt.text.includes(courseName) || 
-                        courseName.includes(opt.text)
-                    );
+                    // 1. Perform Levenshtein Distance matching (handles both partial/abbreviations and spelling correction)
+                    options.forEach(opt => {
+                        // Compare the cleaned strings
+                        const distance = levenshteinDistance(cleanExtractedName, opt.cleanText);
+                        
+                        // Find the option with the shortest distance
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            bestMatch = opt;
+                        }
+                    });
 
-                    if (exactOrSubstringMatch) {
-                        // Found a simple match, use it
-                        selectElement.value = exactOrSubstringMatch.value;
-                        console.log(`Autofill Exact/Substring Match: Extracted "${rawCourseName}" -> Selected "${exactOrSubstringMatch.value}"`);
+                    // 2. Apply the best match if it's within the fuzzy threshold
+                    if (bestMatch && minDistance <= fuzzyThreshold) {
+                        selectElement.value = bestMatch.value;
+                        console.log(`Autofill Fuzzy Match: Extracted "${rawCourseName}" -> Selected "${bestMatch.value}" (Clean Distance: ${minDistance})`);
                     } else {
-                        // 2. Perform Levenshtein Distance matching for "closest" match
-                        options.forEach(opt => {
-                            const distance = levenshteinDistance(courseName, opt.text);
-                            
-                            // Find the option with the shortest distance
-                            if (distance < minDistance) {
-                                minDistance = distance;
-                                bestMatch = opt;
-                            }
-                        });
-
-                        // 3. Apply the best match if it's within the fuzzy threshold
-                        if (bestMatch && minDistance <= fuzzyThreshold) {
-                            selectElement.value = bestMatch.value;
-                            console.log(`Autofill Levenshtein Match: Extracted "${rawCourseName}" -> Selected "${bestMatch.value}" (Distance: ${minDistance})`);
+                        // 3. If no good match is found, fallback to N/A to avoid leaving the default disabled option.
+                        if (Array.from(selectElement.options).some(opt => opt.value === 'N/A')) {
+                            selectElement.value = 'N/A';
+                            console.warn(`Autofill Fallback: Extracted "${rawCourseName}" -> Selected "N/A" (No close match found. Best clean distance: ${minDistance})`);
                         } else {
-                            // 4. If no good match is found, fallback to N/A to avoid leaving the default disabled option.
-                            if (Array.from(selectElement.options).some(opt => opt.value === 'N/A')) {
-                                selectElement.value = 'N/A';
-                                console.warn(`Autofill Fallback: Extracted "${rawCourseName}" -> Selected "N/A" (No close match found. Best distance: ${minDistance})`);
-                            } else {
-                                console.warn(`Autofill Skip: No good match or N/A option for: "${rawCourseName}" (Subject: ${subject}, Grade: ${grade}).`);
-                            }
+                            console.warn(`Autofill Skip: No good match or N/A option for: "${rawCourseName}" (Subject: ${subject}, Grade: ${grade}).`);
                         }
                     }
+                } else {
+                    // CRITICAL LOG: This helps debug if the AI's subject mapping is wrong (e.g., outputs 'History' instead of 'Social Studies')
+                    console.error(`OCR Subject Mapping Error: Could not find a dropdown for subject "${subject}" in grade "${grade}". Check if the subject name is one of the predefined categories (English/ELA, Math, Science, Social Studies, World Language, Elective 1, Elective 2, Elective 3 (Alt.)).`);
                 }
             });
         });
 
         resultDiv.innerHTML = `
             <p style="color: green; font-weight: bold;">
-                🎉 OCR Complete! The form has been auto-filled with the extracted data using robust matching. Please review the selections below to ensure accuracy.
+                🎉 OCR Complete! The form has been auto-filled with the extracted data using robust fuzzy matching. Please review the selections below to ensure accuracy.
             </p>
         `;
     }
@@ -619,154 +629,73 @@
 
     const planTableBody = document.getElementById('planTableBody');
     
-    // **UPDATED COURSE LIST: Now including the comprehensive list from the uploaded academic guide.**
-    const courseOptions = [
-        "Select Course", 
-        "N/A", 
-        "2-D Art Design", 
-        "3-D Art Design", 
-        "ACCESS (Core Classes)",
-        "ACT Prep (1 sem)",
-        "Advanced Agriscience",
-        "Advanced Physics",
-        "Algebra I",
-        "Algebra II",
-        "AP Biology",
-        "AP Calculus AB",
-        "AP Calculus BC",
-        "AP Chemistry",
-        "AP English Language",
-        "AP English Comp",
-        "AP English Lit", 
-        "AP Environmental Science",
-        "AP European History",
-        "AP Music Theory",
-        "AP Physics", 
-        "AP Precalculus",
-        "AP Psychology",
-        "AP Research",
-        "AP Seminar",
-        "AP Statistics",
-        "AP US Government",
-        "AP US History",
-        "Applications of Engineering and Technology",
-        "Applied Agriscience",
-        "Archit. Computer Aided Design (1 sem)",
-        "Art I",
-        "Band",
-        "Banking and Financial Services",
-        "Baseball Conditioning (Zero Period)",
-        "Beginning Kinesiology (Girls PE)",
-        "Beginning Kinesiology (Boys PE)",
-        "Biology",
-        "Business Software Applications I",
-        "Business Software Applications II",
-        "Career Prep",
-        "Cheerleading",
-        "Chemistry",
-        "Chorus",
-        "Civil Air Patrol I",
-        "Civil Air Patrol II",
-        "Civil Air Patrol III",
-        "Civil Air Patrol IV",
-        "Civil Air Patrol V",
-        "Comp Sci A",
-        "Comp Sci Principles",
-        "Concert Band (Fall/Spring)",
-        "Concert Choir (1 sem)",
-        "Cooperative Ed WBL (2 hrs)",
-        "Cooperative Ed WBL (3 hrs)",
-        "Cross Country (Fall)",
-        "CTE Lab in BMA",
-        "CTE Lab in Education and Training",
-        "CTE Lab in Finance",
-        "CTE Lab in Health Science",
-        "Cybersecurity- PLTW",
-        "Digital Media Design",
-        "Driver and Traffic Safety Ed",
-        "Earth and Space Science",
-        "Economics (1 sem)",
-        "Education and Training Foundations (CP-A)",
-        "Education and Train. Internship (2 hrs)",
-        "Engineering Essentials (CP-A)",
-        "English I",
-        "English II",
-        "English III",
-        "English IV",
-        "Environmental Science",
-        "Equipment and Training Foundations",
-        "Family and Consumer Sciences",
-        "Forensic Science & Crime SC Invest",
-        "Football Conditioning (Zero Period)",
-        "Fundamentals of Agriscience (CP-A)",
-        "Geometry",
-        "Golf G",
-        "Golf B",
-        "Gov/Econ", 
-        "Guidance Aide",
-        "Health Education",
-        "Health (1 sem)",
-        "Health (0.5 credit)",
-        "Health Science Internship (2 hours)",
-        "Human Anatomy & Physiology",
-        "Human Body Struct. & Funct.",
-        "IRC Peer Aide",
-        "Intermediate Agriscience",
-        "Intro to Computer Science- TEALS",
-        "Intro to Law and General Legal Systems (CP-A)",
-        "Introduction to Engineering Design PLTW",
-        "Introduction to Manufacturing/Workforce",
-        "Journalism",
-        "Library Aide",
-        "Marketing Principles (CP-A)",
-        "Mathematical Modeling",
-        "Music Theory",
-        "Office Aide",
-        "Online Dual Enrollment",
-        "PE (Personal Fitness)",
-        "Personal Finance",
-        "Pharmacy Technician",
-        "Physics",
-        "Precalculus",
-        "Principles of Engineering- PLTW",
-        "Psychology",
-        "Robotics (CP-A)",
-        "Soccer G",
-        "Soccer B",
-        "Softball",
-        "Spanish 1",
-        "Spanish 2",
-        "Spanish 3",
-        "Spanish 4",
-        "Sports and Entertainment Marketing Fund",
-        "Sports Medicine Fundamentals",
-        "Studio Art",
-        "Survey of the New Testament (Fall)",
-        "Survey of the Old Testament (Spring)",
-        "Teaching I - Elementary",
-        "Teaching I - Secondary",
-        "Teaching II",
-        "Tennis",
-        "Theatre",
-        "Theatre I",
-        "Theatre II",
-        "Theatre III",
-        "Theatre IV",
-        "Track (Spring)",
-        "US Government (1 sem)",
-        "US History",
-        "Varsity Baseball",
-        "Varsity Basketball",
-        "Varsity Football",
-        "Varsity Volleyball",
-        "Visual Arts I",
-        "Visual Arts II",
-        "Visual Arts III",
-        "Visual Arts IV",
-        "Vocal Tech",
-        "Wrestling",
-        "Yearbook"
-    ];
+    // **NEW STRUCTURE: Courses are categorized for filtered dropdown menus.**
+    // Note: The OCR system dynamically reads the options from the generated dropdowns.
+    const courseCategories = {
+        'Core': ["Select Course", "N/A"], // Base options for all dropdowns
+        'English/ELA': [
+            "English I", "English II", "English III", "English IV",
+            "AP English Language", "AP English Comp", "AP English Lit", 
+            "Journalism", "Yearbook"
+        ],
+        'Math': [
+            "Algebra I", "Algebra II", "Geometry", "Precalculus", "Mathematical Modeling",
+            "AP Calculus AB", "AP Calculus BC", "AP Statistics", "AP Precalculus",
+            "ACT Prep (1 sem)"
+        ],
+        'Science': [
+            "Biology", "Chemistry", "Physics", "Advanced Physics",
+            "Earth and Space Science", "Environmental Science",
+            "Human Anatomy & Physiology", "Human Body Struct. & Funct.",
+            "Forensic Science & Crime SC Invest",
+            "AP Biology", "AP Chemistry", "AP Environmental Science", "AP Physics",
+        ],
+        'Social Studies': [
+            "US History", "Gov/Econ", // Gov/Econ combined option
+            "US Government (1 sem)", "Economics (1 sem)",
+            "AP US History", "AP US Government", "AP European History",
+            "Psychology", "AP Psychology",
+            "Survey of the New Testament (Fall)", "Survey of the Old Testament (Spring)" // Religious/History Elective
+        ],
+        'World Language': [
+            "Spanish 1", "Spanish 2", "Spanish 3", "Spanish 4",
+        ],
+        // The following courses are available for Elective 1, Elective 2, and Elective 3 (Alt.)
+        'Electives': [
+            "2-D Art Design", "3-D Art Design", "Art I", "Studio Art",
+            "Visual Arts I", "Visual Arts II", "Visual Arts III", "Visual Arts IV",
+            "Band", "Chorus", "Concert Band (Fall/Spring)", "Concert Choir (1 sem)", "Music Theory", "Vocal Tech", "AP Music Theory",
+            "Theatre", "Theatre I", "Theatre II", "Theatre III", "Theatre IV",
+            "Beginning Kinesiology (Girls PE)", "Beginning Kinesiology (Boys PE)", 
+            "PE (Personal Fitness)", "Baseball Conditioning (Zero Period)", "Football Conditioning (Zero Period)", 
+            "Golf G", "Golf B", "Soccer G", "Soccer B", "Softball", "Tennis", "Track (Spring)", "Wrestling",
+            "Varsity Baseball", "Varsity Basketball", "Varsity Football", "Varsity Volleyball",
+            "Cheerleading", "Cross Country (Fall)",
+            "Health Education", "Health (1 sem)", "Health (0.5 credit)",
+            "Career Prep", "Personal Finance",
+            "Digital Media Design",
+            "Business Software Applications I", "Business Software Applications II",
+            "Banking and Financial Services", "Marketing Principles (CP-A)", "Sports and Entertainment Marketing Fund",
+            "Fundamentals of Agriscience (CP-A)", "Applied Agriscience", "Intermediate Agriscience", "Advanced Agriscience",
+            "Education and Training Foundations (CP-A)", "Education and Train. Internship (2 hrs)",
+            "Teaching I - Elementary", "Teaching I - Secondary", "Teaching II",
+            "Health Science Internship (2 hours)", "Pharmacy Technician", "Sports Medicine Fundamentals",
+            "Introduction to Engineering Design PLTW", "Principles of Engineering- PLTW", "Engineering Essentials (CP-A)", 
+            "Cybersecurity- PLTW", "Comp Sci A", "Comp Sci Principles", "Intro to Computer Science- TEALS", "Robotics (CP-A)",
+            "Applications of Engineering and Technology", "Archit. Computer Aided Design (1 sem)", "Introduction to Manufacturing/Workforce",
+            "Civil Air Patrol I", "Civil Air Patrol II", "Civil Air Patrol III", "Civil Air Patrol IV", "Civil Air Patrol V",
+            "Cooperative Ed WBL (2 hrs)", "Cooperative Ed WBL (3 hrs)",
+            "CTE Lab in BMA", "CTE Lab in Education and Training", "CTE Lab in Finance", "CTE Lab in Health Science",
+            "Driver and Traffic Safety Ed", 
+            "Equipment and Training Foundations",
+            "Family and Consumer Sciences",
+            "Guidance Aide", "IRC Peer Aide", "Library Aide", "Office Aide",
+            "Intro to Law and General Legal Systems (CP-A)",
+            "Online Dual Enrollment",
+            "AP Research", "AP Seminar",
+            "ACCESS (Core Classes)"
+        ]
+    };
 
     const subjects = [
         { name: "English/ELA", required: true },
@@ -779,6 +708,34 @@
         { name: "Elective 3 (Alt.)", required: false }
     ];
 
+    /**
+     * Filters the master course list based on the subject category name.
+     * Elective slots all pull from the 'Electives' pool.
+     * @param {string} subjectName - The subject category name (e.g., 'English/ELA').
+     * @returns {string[]} An array of filtered course names.
+     */
+    function getCoursesForSubject(subjectName) {
+        let categoryKey = subjectName;
+
+        // Map all 'Elective' variations to the single 'Electives' key
+        if (subjectName.startsWith('Elective')) {
+            categoryKey = 'Electives';
+        }
+
+        const baseOptions = courseCategories['Core'];
+        const subjectSpecificOptions = courseCategories[categoryKey] || [];
+
+        // Combine base options ("Select Course", "N/A") with subject-specific courses
+        // and sort alphabetically (keeping base options at the top).
+        return [...baseOptions, ...subjectSpecificOptions].sort((a, b) => {
+            if (a === "Select Course") return -1;
+            if (a === "N/A" && b !== "Select Course") return -1;
+            if (b === "Select Course" || b === "N/A") return 1;
+            return a.localeCompare(b);
+        });
+    }
+
+
     function createCourseSelector(subjectName, grade) {
         const select = document.createElement('select');
         select.name = `${grade} Grade - ${subjectName}`;
@@ -787,11 +744,14 @@
         select.required = isCore;
         select.classList.add('course-select');
 
-        courseOptions.forEach((course, index) => {
+        // Use the new filtering function to get relevant options
+        const relevantCourses = getCoursesForSubject(subjectName);
+
+        relevantCourses.forEach(course => {
             const option = document.createElement('option');
             option.value = course;
             option.textContent = course;
-            if (index === 0) {
+            if (course === "Select Course") {
                 option.disabled = true;
                 option.selected = true;
             }
